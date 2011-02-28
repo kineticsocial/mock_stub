@@ -18,6 +18,7 @@ test
 Here is a simple example, for more information, please email me at allen.kim@epicadvertising.com
 
 Examples
+--------
 	-module(my_module).
 	-compile(export_all).
 	foo()    -> foo0.
