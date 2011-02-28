@@ -1,0 +1,9 @@
+compile
+	erlc -o ebin src/*.erl
+	
+test
+	erlc -DTEST +debug_info -o ebin src/*.erl test/*.erl
+	erl -pa ebin -noshell -s stub test -eval "eunit:test(stub,[verbose])" -s init stop
+	erl -pa ebin -noshell -s stub test -eval "eunit:test(mock,[verbose])" -s init stop
+
+
