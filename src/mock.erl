@@ -109,7 +109,6 @@ get_expectation(Function, Args, Expectations) ->
 	Reply = case proplists:get_value( {Function, Args}, Expectations ) of
 		undefined ->
 			FunArity = list_to_atom(lists:concat([Function, '/', size(Args)])),
-	io:format("FunArity ~p~n",[FunArity]),
 			case proplists:get_value( FunArity, Expectations ) of 
 				CallbackFun when is_function(CallbackFun) ->
 					Applied = apply(CallbackFun, tuple_to_list(Args)),
@@ -120,10 +119,6 @@ get_expectation(Function, Args, Expectations) ->
 		Match ->
 			Match
 	end,
-	io:format("Function ~p~n",[Function]),
-	io:format("Args ~p~n",[Args]),
-	io:format("Reply ~p~n",[Reply]),
-	io:format("Expectations ~p~n",[Expectations]),
 	case check_expectation_pattern(Function, Reply) of   % check if OTP calls return proper response
 		pass ->
 			Reply;
