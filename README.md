@@ -17,13 +17,14 @@ test
 
 mock test example
 ---------------------
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% -module(my_module). 
+	% -compile(export_all).
+	% foo()    -> foo0.
+	% foo(_)   -> foo1.
+	% foo(_,_) -> foo2.
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
- % -module(my_module). 
- % -compile(export_all).
- % foo()    -> foo0.
- % foo(_)   -> foo1.
- % foo(_,_) -> foo2.
- mock_module_test() ->
 	% before mock
 	foo0 = my_module:foo(),
 	foo1  = my_module:foo(1),
@@ -49,17 +50,19 @@ mock test example
 	?assertEqual( foo1, my_module:foo(1)),
 	?assertEqual( foo2, my_module:foo(1,2)).
 
- % -module(my_gen_server).
- % -compile(export_all).
- % -record(state, {call=0, cast=0, info=0}).
- % 
- % init(_Args) -> {ok, #state{}}.
- % handle_call(foo, _, #state{call=Count}=State) -> {reply, foo_call, State#state{call=Count+1}}.
- % handle_cast(foo, #state{cast=Count}=State) ->    {noreply, State#state{cast=Count+1}}.
- % handle_info(foo, #state{info=Count}=State) ->    {noreply, State#state{info=Count+1}}.
- % terminate(_Reason, _State) -> ok.  
- % code_change(_OldVsn, State, _Extra) -> {ok, State}.
- mock_gen_server_test()->
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% -module(my_gen_server).
+	% -compile(export_all).
+	% -record(state, {call=0, cast=0, info=0}).
+	% 
+	% init(_Args) -> {ok, #state{}}.
+	% handle_call(foo, _, #state{call=Count}=State) -> {reply, foo_call, State#state{call=Count+1}}.
+	% handle_cast(foo, #state{cast=Count}=State) ->    {noreply, State#state{cast=Count+1}}.
+	% handle_info(foo, #state{info=Count}=State) ->    {noreply, State#state{info=Count+1}}.
+	% terminate(_Reason, _State) -> ok.  
+	% code_change(_OldVsn, State, _Extra) -> {ok, State}.
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	
 	gen_server:start({local, my_reg_gen_server}, my_gen_server, [], []),
 	timer:sleep(10),
 	% before mock
@@ -79,20 +82,22 @@ mock test example
 	?assertEqual( foo, my_reg_gen_server ! foo),
 	mock:stop(my_gen_server).
 
- % -module(my_gen_event).
- % -behaviour(gen_event).
- % -export([start/1, stop/0]).
- % -export([init/1, handle_event/2, handle_call/2, handle_info/2, code_change/3, terminate/2]).
- % 
- % start(Options) -> ok = gen_event:add_sup_handler(my_gen_event_manager, ?MODULE, Options),
- % stop()         -> gen_event:delete_handler(my_gen_event_manager, ?MODULE, []).
- % init(_Args)              -> {ok, _State=[]}.
- % handle_event(foo, State) -> {ok, State}.
- % handle_call(foo, State)  -> {ok, mock_call_foo, State}.
- % handle_info(_, State)    -> {ok, State}.
- % code_change(_, State, _) -> {ok, State}.
- % terminate(_, _)          -> ok.
- mock_gen_event_test() ->
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% -module(my_gen_event).
+	% -behaviour(gen_event).
+	% -export([start/1, stop/0]).
+	% -export([init/1, handle_event/2, handle_call/2, handle_info/2, code_change/3, terminate/2]).
+	% 
+	% start(Options) -> ok = gen_event:add_sup_handler(my_gen_event_manager, ?MODULE, Options),
+	% stop()         -> gen_event:delete_handler(my_gen_event_manager, ?MODULE, []).
+	% init(_Args)              -> {ok, _State=[]}.
+	% handle_event(foo, State) -> {ok, State}.
+	% handle_call(foo, State)  -> {ok, mock_call_foo, State}.
+	% handle_info(_, State)    -> {ok, State}.
+	% code_change(_, State, _) -> {ok, State}.
+	% terminate(_, _)          -> ok.
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 	% starting of manager/adding of a handler must have been done before your test
 	gen_event:start_link({local,my_gen_event_manager}),
 	gen_event:add_handler(my_gen_event_manager, my_gen_event, []),
@@ -118,11 +123,13 @@ mock test example
 
 stub test example
 --------------------
-  %-module(my_module).
-  %-compile(export_all).
-  %foo()    -> foo0.
-  %foo(_)   -> foo1.
-  %foo(_,_) -> foo2.
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 	%-module(my_module).
+ 	%-compile(export_all).
+	 %foo()    -> foo0.
+ 	%foo(_)   -> foo1.
+ 	%foo(_,_) -> foo2.
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 	foo0 = my_module:foo(),
 	foo1 = my_module:foo(1),
