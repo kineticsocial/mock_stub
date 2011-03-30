@@ -1,42 +1,42 @@
+%
+% Here is how it works
+%
+% when expect is called, 
+%   1. it saves the existing module to old_code
+%   2. build the same name module to call epic_mock:proxy_call
+%   3. save the expectation to reply to the call
+%   
+% when the actual module:function is called
+%   1. search the expectation, then reply the call
+%
+% When stop is called
+%   1. it stores back the original modules
+%
+% expect must has two arity
+%   1. Function and Argument
+%      Arguments could be a real argument or general ones, i.e 'Arity2', 'Arity3'
+%   2. Reply to the call, expectation
+%      This could be a term, or a function
+%
 -module(mock).
 -include_lib("eunit/include/eunit.hrl").
 -behaviour(gen_server).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -compile(export_all).
--record(state, {old_code, module, expectations=[]}).
+-record(state, { old_code, module, forms, expectations}).
 
-%
-% A mock module is simulated module that mimic the behaviour of real module in controlled ways.
-%
 start(Module) ->
 	gen_server:start_link({local, reg_name(Module)}, mock, Module, []).
 
-expect(Module, Function, Args, Expectation) ->
+expect({Module, Function, Args}, Expectation) ->
 	gen_server:call(reg_name(Module), {expect, Function, Args, Expectation}).
 
-expect(Module, Function, CallbackFun) when is_function(CallbackFun) ->
-	Props = erlang:fun_info(CallbackFun),
-	Arity = proplists:get_value(arity, Props),
-	FunArity = list_to_atom(lists:concat([Function, '/', Arity])),
-	gen_server:call(reg_name(Module), {expect, FunArity, CallbackFun});
-	
-expect(Module, FunArity, Expectation) ->
-	gen_server:call(reg_name(Module), {expect, FunArity, Expectation}).
-
 stop(Module) ->
-	MockModule = reg_name(Module),
-	case lists:member(MockModule, erlang:registered()) of 
-		true ->
-			%shoud not stop immediately because aysnc. messages might have not been processed
-			timer:sleep(20),  
-		    gen_server:cast(MockModule, stop),
-			timer:sleep(20);  
-		false -> 
-			{error, not_registered, MockModule} 
+	timer:sleep(30),  % in case gen_server messages are not fully processed. i.e. $gen_cast
+	case lists:member(reg_name(Module), erlang:registered()) of 
+		true -> gen_server:cast(reg_name(Module), stop);
+		false-> {error, not_registered, reg_name(Module)} 
 	end.
-
-proxy_call(Module, Function) ->
-	gen_server:call(reg_name(Module), {proxy_call, Function, {}}).
 
 proxy_call(Module, Function, Args) ->
 	gen_server:call(reg_name(Module), {proxy_call, Function, Args}).
@@ -45,21 +45,16 @@ proxy_call(Module, Function, Args) ->
 % gen_server calls
 %----------------------------------------------------------------------------------
 init(Module) ->
-  case code:get_object_code(Module) of
-    {Module, Bin, Filename} ->
-      case replace_code(Module) of
-        ok -> 
-			%wait for pid name registeration
-			timer:sleep(20),
-			{ok, #state{module=Module,old_code={Module, Bin, Filename}}};
-        {error, Reason} -> 
-			{stop, Reason}
-      end;
-    error -> 
-		{error, non_existing_module, Module} 
-  end.
+	OldCode = code:get_object_code(Module),
+	State = #state{
+		old_code=OldCode, 
+		module=Module, 
+		forms=[ {attribute,1,module,Module},{attribute,2,export,[]} ],
+		expectations=[]},
+	{ok, State}.
 
-handle_call({proxy_call, Function, Args}, _From, State) ->
+handle_call({proxy_call, Function, TupleArgs}, _From, State) ->
+	Args = tuple_to_list(TupleArgs),
 	Reply = case get_expectation(Function, Args, State#state.expectations) of
 		undefined -> 
 			{error, undefined_expectations, Function, Args, State#state.expectations};
@@ -68,13 +63,23 @@ handle_call({proxy_call, Function, Args}, _From, State) ->
 	end,
 	{reply, Reply, State};
 
-handle_call({expect, Function, Args, Expectation}, _From, State) ->
-	NewExpectations = set_expectation({Function,Args}, Expectation, State#state.expectations),
-	{reply, ok, State#state{expectations=NewExpectations}};
+handle_call({expect, Fun, Args, Expectation}, _From, State) ->
+	true = is_valid_expectation(Fun, Args, Expectation),
+	NewExpectations = new_expectations(State#state.expectations, {Fun, Args}, Expectation),
+	NewForms        = new_forms(State, {Fun, Args}),
 
-handle_call({expect, FunArgs, Expectation}, _From, State) ->
-	NewExpectations = set_expectation(FunArgs, Expectation, State#state.expectations),
-	{reply, ok, State#state{expectations=NewExpectations}};
+	% delete existing module
+	code:purge(State#state.module),
+	code:delete(State#state.module),
+
+	% then, activate a new module to call mock:proxy_call all the time
+	{ok, Module, Binary} = compile:forms(NewForms, [binary]),
+	{module, Module} = code:load_binary( Module, atom_to_list(Module) ++ ".erl", Binary ),
+
+	NewState = State#state{
+		forms=NewForms, 
+		expectations=NewExpectations },
+	{reply, ok, NewState} ;
 
 handle_call(_Request, _From, State) ->
 	{reply, {error, ignored}, State}.
@@ -85,10 +90,15 @@ handle_cast(stop, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, #state{old_code={Module, Binary, Filename}}) ->
-	code:purge(Module),
-	code:delete(Module),
-	code:load_binary(Module, Filename, Binary).
+terminate(_Reason, State) ->
+	code:purge(State#state.module),
+	code:delete(State#state.module),
+	case State#state.old_code of
+		{Module, Binary, Filename} ->
+			code:load_binary(Module, Filename, Binary);
+		_ ->
+			ok
+	end.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
@@ -99,235 +109,149 @@ code_change(_OldVsn, State, _Extra) ->
 reg_name(Module) when is_atom(Module) ->
 	list_to_atom(lists:concat([mock_, Module])).
 
-%
-% find exact fun/args match
-% if not found, found fun/arity match
-% 	if it is a function, return after applying function
-% 	if not, return as it is
-%
-get_expectation(Function, Args, Expectations) ->
-	Reply = case proplists:get_value( {Function, Args}, Expectations ) of
-		undefined ->
-			FunArity = list_to_atom(lists:concat([Function, '/', size(Args)])),
-			case proplists:get_value( FunArity, Expectations ) of 
-				CallbackFun when is_function(CallbackFun) ->
-					Applied = apply(CallbackFun, tuple_to_list(Args)),
-					Applied;
-				Match ->
-					Match
-			end;
-		Match ->
-			Match
+new_expectations(ExistingExpectations, {Fun,Args}, Expectation) -> 
+	NewExpectations = case lists:keyfind({Fun,Args}, 1, ExistingExpectations) of
+		{{Fun,Args}, _Value} -> % expectation already registered?, set as new one
+			lists:keyreplace({Fun,Args}, 1,ExistingExpectations,{{Fun,Args},Expectation});
+		false ->        % new expectation?
+			ExistingExpectations ++ [{{Fun,Args},Expectation}]
 	end,
-	case check_expectation_pattern(Function, Reply) of   % check if OTP calls return proper response
-		pass ->
-			Reply;
-		fail ->
-			{error, "invalid response", Reply, "for function", Function}
+	NewExpectations.
+
+new_forms(State,  {Function, Args}) ->
+	Module = State#state.module,
+	[{attribute,1,module,Module},{attribute,2,export,Exports}|_] = State#state.forms,
+	NewExports = if 
+		is_atom(Args) -> % i.e 'Arity2'
+			{match, [_,Arity]} = re:run(atom_to_list(Args),"Arity([0-9]+)",[{capture, all, list}]),
+			Exports ++ [{Function, list_to_integer(Arity)}];
+		is_list(Args) ->
+			Exports ++ [{Function, erlang:length(Args)}] 
+	end,
+	ProxyCallFunctions = generate_functions(Module, NewExports),
+	NewForms = [ 
+		{attribute,1,module,Module}, 
+		{attribute,2,export, lists:usort(NewExports)} ] 
+		++ lists:usort(ProxyCallFunctions),
+	NewForms.
+
+get_expectation(Function, Args, Expectations) ->
+	ArgArity = list_to_atom("Arity"++integer_to_list(erlang:length(Args))),
+	Reply = case lists:keyfind( {Function,Args}, 1, Expectations ) of  % find exact match first
+		{_, Expectation} ->
+			Expectation;
+		false ->
+			case lists:keyfind( {Function,ArgArity}, 1, Expectations) of  % find arity match second
+				{_, Value} -> Value;
+				false      -> {error, undefined_expectation} 
+			end 
+	end,
+	if   % apply function if necessary as result
+		is_function(Reply) -> apply(Reply, Args);
+		true               -> Reply
 	end.
 
-check_expectation_pattern(Function, Reply) ->
-	case lists:member(Function, [handle_call, handle_cast, handle_info, handle_event, handle_sync_event]) of
-		true ->
+is_valid_expectation(Function, _Args, Reply) ->
+	IsOTPFunction = lists:member(Function, [handle_call, handle_cast, handle_info, handle_event, handle_sync_event]), 
+	if 
+		IsOTPFunction == true ->
 			case is_tuple(Reply) of
 				true ->
 					FirstElement = lists:nth(1,tuple_to_list(Reply)),
 					if 
 						% gen_server calls
-						Function == handle_call, size(Reply) == 3, FirstElement == reply   -> pass;
-						Function == handle_cast, size(Reply) == 2, FirstElement == noreply -> pass;
-						Function == handle_info, size(Reply) == 2, FirstElement == noreply -> pass;
+						Function == handle_call, size(Reply) == 3, FirstElement == reply   -> true;
+						Function == handle_cast, size(Reply) == 2, FirstElement == noreply -> true;
+						Function == handle_info, size(Reply) == 2, FirstElement == noreply -> true;
 						% gen_fsm calls
-						Function == handle_event, size(Reply) == 3, FirstElement == next_state -> pass;
-						Function == handle_event, size(Reply) == 3, FirstElement == stop -> pass;
-						Function == handle_sync_event, size(Reply) == 3, FirstElement == next_state -> pass;
-						Function == handle_sync_event, size(Reply) == 4, FirstElement == reply -> pass;
-						Function == handle_sync_event, size(Reply) == 3, FirstElement == stop -> pass;
-						Function == handle_info, size(Reply) == 3, FirstElement == next_state -> pass;
-						Function == handle_info, size(Reply) == 3, FirstElement == stop -> pass;
+						Function == handle_event, size(Reply) == 3, FirstElement == next_state -> true;
+						Function == handle_event, size(Reply) == 3, FirstElement == stop -> true;
+						Function == handle_sync_event, size(Reply) == 3, FirstElement == next_state -> true;
+						Function == handle_sync_event, size(Reply) == 4, FirstElement == reply -> true;
+						Function == handle_sync_event, size(Reply) == 3, FirstElement == stop -> true;
+						Function == handle_info, size(Reply) == 3, FirstElement == next_state -> true;
+						Function == handle_info, size(Reply) == 3, FirstElement == stop -> true;
 						% gen_event handler calls
 						% TODO -- differentiate the following from gen_server calls
-						Function == handle_call, size(Reply) == 3, FirstElement == ok -> pass;
-						Function == handle_event, size(Reply) == 2, FirstElement == ok -> pass;
-						Function == handle_info, size(Reply) == 2, FirstElement == ok -> pass;
-						true -> fail
+						Function == handle_call, size(Reply) == 3, FirstElement == ok -> true;
+						Function == handle_event, size(Reply) == 2, FirstElement == ok -> true;
+						Function == handle_info, size(Reply) == 2, FirstElement == ok -> true;
+						true -> false
 					end;
 				false ->
-					fail
+					false
 			end;
-		false -> % if not OTP function
-			pass
+		true -> % if not OTP function
+			true
 	end.
 
-set_expectation(FunArgs, Expectation, Expectations) ->
-	NewExpectation = case FunArgs of
-		{Function, Args} when is_atom(Function), is_list(Args) ->  % [arg1, arg2]
-			[{{Function, erlang:list_to_tuple(Args)}, Expectation}];
-		{Function, Args} when is_atom(Function), is_tuple(Args) -> % {arg2, arg2}
-			[{{Function, Args}, Expectation}];
-		FunctionArity    when is_atom(FunctionArity) -> % i.e. 'myfun/0'
-			[{FunctionArity, Expectation}];
-		_Any ->
-    		error_logger:warning_report(["Invalid expectation set, will be ignored", FunArgs]),
-			[]
-	end,
-	Expectations ++ NewExpectation.
-
-%
-% the following functions are copied from http://github.com/cliffmoon/effigy ( Author, Cliff Moon/Brad Andersoon )
-%
-replace_code(Module) ->
-  Info = Module:module_info(),
-  Exports = get_exports(Info),
-  unload_code(Module),
-  NewFunctions = generate_functions(Module, Exports),
-  Forms = [
-    {attribute,1,module,Module},
-    {attribute,2,export,Exports}
-  ] ++ NewFunctions,
-  case compile:forms(Forms, [binary]) of
-    {ok, Module, Binary} -> case code:load_binary(Module, atom_to_list(Module) ++ ".erl", Binary) of
-      {module, Module} -> ok;
-      {error, Reason} -> {error, Reason}
-    end;
-    error -> {error, "An undefined error happened when compiling."};
-    {error, Errors, Warnings} -> {error, Errors ++ Warnings}
-  end.
-
-unload_code(Module) ->
-  code:purge(Module),
-  code:delete(Module).
-
-get_exports(Info) ->
-  get_exports(Info, []).
-
-get_exports(Info, Acc) ->
-  case lists:keytake(exports, 1, Info) of
-    {value, {exports, Exports}, ModInfo} ->
-      get_exports(ModInfo, Acc ++ lists:filter(fun({module_info, _}) -> false; (_) -> true end, Exports));
-    _ -> Acc
-  end.
-
 generate_functions(Module, Exports) ->
-  generate_functions(Module, Exports, []).
+	generate_functions(Module, Exports, []).
 
 generate_functions(_Module, [], FunctionForms) ->
-  lists:reverse(FunctionForms);
+	lists:reverse(FunctionForms);
 generate_functions(Module, [{Name,Arity}|Exports], FunctionForms) ->
-  generate_functions(Module, Exports, [generate_function(Module, Name, Arity)|FunctionForms]).
+	generate_functions(Module, Exports, [generate_function(Module, Name, Arity)|FunctionForms]).
 
-generate_function(Module, Name, Arity) ->
-  {function, 1, Name, Arity, [{clause, 1, generate_variables(Arity), [], generate_expression(mock, proxy_call, Module, Name, Arity)}]}.
+generate_function(Module, Fun, Arity) ->
+	{function, 1, Fun, Arity, [{clause, 1, generate_variables(Arity), [], generate_expression(?MODULE, proxy_call, Module, Fun, Arity)}]}.
 
 generate_variables(0) -> [];
 generate_variables(Arity) ->
-  lists:map(fun(N) ->
-      {var, 1, list_to_atom(lists:concat(['Arg', N]))}
-    end, lists:seq(1, Arity)).
+	lists:map(fun(N) -> 
+			{var, 1, list_to_atom(lists:concat(['Arg', N]))} 
+	end, lists:seq(1, Arity)).
 
-generate_expression(M, F, Module, Name, 0) ->
-  [{call,1,{remote,1,{atom,1,M},{atom,1,F}}, [{atom,1,Module}, {atom,1,Name}]}];
 generate_expression(M, F, Module, Name, Arity) ->
-  [{call,1,{remote,1,{atom,1,M},{atom,1,F}}, [{atom,1,Module}, {atom,1,Name}, {tuple,1,lists:map(fun(N) ->
-      {var, 1, list_to_atom(lists:concat(['Arg', N]))}
-    end, lists:seq(1, Arity))}]}].
+	[{call,1,{remote,1,{atom,1,M},{atom,1,F}}, [{atom,1,Module}, {atom,1,Name}, {tuple,1, generate_variables(Arity)} ]}].
 
 -ifdef(TEST).
-% -module(my_module).
-% -compile(export_all).
-% foo()    -> foo0.
-% foo(_)   -> foo1.
-% foo(_,_) -> foo2.
-mock_module_test() ->
-	% before mock
-	foo0 = my_module:foo(),
-	foo1  = my_module:foo(1),
-	foo2 = my_module:foo(1,2),
 
-	% start mock
-	{ok, _Pid} = mock:start(my_module),
-	ok = mock:expect(my_module, foo, [], mock_foo0),
-	ok = mock:expect(my_module, foo, [1], mock_foo1),
-	ok = mock:expect(my_module, foo, [1,2], mock_foo2),
-	ok = mock:expect(my_module, 'foo/1', mock_other_foo1),
-	ok = mock:expect(my_module, foo, fun(_,_) -> mock_other_foo2 end ),
+module_test() ->
+	{ok, _Pid} = mock:start(fake_module),
+	ok = mock:expect({fake_module, foo, []}, bar0),
+	ok = mock:expect({fake_module, foo, [1]}, bar1),
+	ok = mock:expect({fake_module, foo, 'Arity2'}, fun(A,B) -> A+B end),
+	ok = mock:expect({fake_module, foo, 'Arity3'}, foobar),
+	ok = mock:expect({fake_module, foo, [1,2,3,4]}, fun(A,B,C,D) -> A+B+C+D end),
 
-	% after mock
-	?assertEqual( mock_foo0, my_module:foo()),
-	?assertEqual( mock_foo1, my_module:foo(1)),
-	?assertEqual( mock_foo2, my_module:foo(1,2)),
-	?assertEqual( mock_other_foo1, my_module:foo(other)),
-	?assertEqual( mock_other_foo2, my_module:foo(4,5)),
-	mock:stop(my_module),
+	?assertEqual( bar0, fake_module:foo()),
+	?assertEqual( bar1, fake_module:foo(1)),
+	?assertEqual( 5,    fake_module:foo(2,3)),
+	?assertEqual( foobar, fake_module:foo(1,2,3)),
+	?assertEqual( 10,   fake_module:foo(1,2,3,4)),
+	mock:stop(fake_module).
 
-	?assertEqual( foo0, my_module:foo()),
-	?assertEqual( foo1, my_module:foo(1)),
-	?assertEqual( foo2, my_module:foo(1,2)).
+gen_server_test()->
+	{ok, _Pid} = mock:start(fake_server),
+	ok = mock:expect({fake_server, init, [[]]}, {ok,[]}),
+	ok = mock:expect({fake_server, handle_call, 'Arity3'}, {reply, bar, []}),
+	ok = mock:expect({fake_server, handle_cast, 'Arity2'}, {noreply, []}),
+	ok = mock:expect({fake_server, handle_info, 'Arity2'}, {noreply, []}),
+	_Result = gen_server:start({local, fake_server}, fake_server, [], []),
 
-% -module(my_gen_server).
-% -compile(export_all).
-% -record(state, {call=0, cast=0, info=0}).
-% 
-% init(_Args) -> {ok, #state{}}.
-% handle_call(foo, _, #state{call=Count}=State) -> {reply, foo_call, State#state{call=Count+1}}.
-% handle_cast(foo, #state{cast=Count}=State) ->    {noreply, State#state{cast=Count+1}}.
-% handle_info(foo, #state{info=Count}=State) ->    {noreply, State#state{info=Count+1}}.
-% terminate(_Reason, _State) -> ok.  
-% code_change(_OldVsn, State, _Extra) -> {ok, State}.
-mock_gen_server_test()->
-	gen_server:start({local, my_reg_gen_server}, my_gen_server, [], []),
-	timer:sleep(10),
-	% before mock
-	call_foo = gen_server:call(my_reg_gen_server, foo),
-	ok = gen_server:cast(my_reg_gen_server, foo),
-	foo = my_reg_gen_server ! foo,
+	?assertEqual( bar, gen_server:call(fake_server, foo)),
+	?assertEqual( ok , gen_server:cast(fake_server, foo)),
+	?assertEqual( foo, fake_server ! foo),
+	mock:stop(fake_server).
 
-	% start mock
-	{ok, _} = mock:start(my_gen_server),
-	ok = mock:expect(my_gen_server, 'handle_call/3', {reply, mock_call_foo, []}),
-	ok = mock:expect(my_gen_server, 'handle_cast/2', {noreply, []}),
-	ok = mock:expect(my_gen_server, 'handle_info/2', {noreply, []}),
-
-	% after mock
-	?assertEqual( mock_call_foo, gen_server:call(my_reg_gen_server, foo)),
-	?assertEqual( ok , gen_server:cast(my_reg_gen_server, foo)),
-	?assertEqual( foo, my_reg_gen_server ! foo),
-	mock:stop(my_gen_server).
-
-% -module(my_gen_event).
-% -behaviour(gen_event).
-% -export([start/1, stop/0]).
-% -export([init/1, handle_event/2, handle_call/2, handle_info/2, code_change/3, terminate/2]).
-% 
-% start(Options) -> ok = gen_event:add_sup_handler(my_gen_event_manager, ?MODULE, Options),
-% stop()         -> gen_event:delete_handler(my_gen_event_manager, ?MODULE, []).
-% init(_Args)              -> {ok, _State=[]}.
-% handle_event(foo, State) -> {ok, State}.
-% handle_call(foo, State)  -> {ok, mock_call_foo, State}.
-% handle_info(_, State)    -> {ok, State}.
-% code_change(_, State, _) -> {ok, State}.
-% terminate(_, _)          -> ok.
 mock_gen_event_test() ->
-	% starting of manager/adding of a handler must have been done before your test
-	gen_event:start_link({local,my_gen_event_manager}),
-	gen_event:add_handler(my_gen_event_manager, my_gen_event, []),
-
-	% before mock
-	call_foo = gen_event:call(my_gen_event_manager, my_gen_event, foo), 
-	ok = gen_event:notify(my_gen_event_manager, foo),
-
 	% start mock
-	{ok, _Pid} = mock:start(my_gen_event),
-	ok = mock:expect(my_gen_event, 'handle_call/2', {ok, mock_call_foo, []}),
-	ok = mock:expect(my_gen_event, 'handle_event/2', {ok, []}),
+	{ok, _Pid} = mock:start(fake_event),
+	ok = mock:expect({fake_event, init,  'Arity1'}, {ok, []}),
+	ok = mock:expect({fake_event, handle_call,  'Arity2'}, {ok, bar, []}),
+	ok = mock:expect({fake_event, handle_event, 'Arity2'}, {ok,[]}),
 
-	% after mock
-	?assertEqual( mock_call_foo, gen_event:call(my_gen_event_manager, my_gen_event, foo)),
-	?assertEqual( ok, gen_event:notify(my_gen_event_manager, foo)),
+	% start gen_event
+	_Result1 = gen_event:start_link({local,fake_event_manager}),
+	_Result2 = gen_event:add_handler(fake_event_manager, fake_event, []),
 
-	% mock reverted
-	mock:stop(my_gen_event),
-	?assertEqual( call_foo, gen_event:call(my_gen_event_manager, my_gen_event, foo)), 
-	?assertEqual( ok, gen_event:notify(my_gen_event_manager, foo)), 
-	gen_event:stop(my_gen_event_manager).
+	% call gen_event
+	?assertEqual( bar, gen_event:call(fake_event_manager, fake_event, foo)),
+	?assertEqual( ok,  gen_event:notify(fake_event_manager, foo)),
+	
+	% stop
+	gen_event:stop(fake_event_manager),
+	mock:stop(fake_event).
+
 -endif.
