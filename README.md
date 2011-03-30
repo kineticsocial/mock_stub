@@ -20,7 +20,6 @@ expect must has two arity
   2. Reply to the call, expectation
      This could be a term, or a function
 
-
 compile
 -------
 	erlc -o ebin src/*.erl
@@ -62,4 +61,3 @@ Examples
   ok  = gen_server:cast(fake_server, foo),
   foo = fake_server ! foo,
   mock:stop(fake_server).
-
