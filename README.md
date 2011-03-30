@@ -35,30 +35,30 @@ Here is a simple example, for more information, please email me at allen.kim@epi
 
 Examples
 --------
-  % for a module
-  {ok, _} = mock:start(fake_module),
-  ok = mock:expect({fake_module, foo, []}, bar0),
-  ok = mock:expect({fake_module, foo, [1]}, bar1),
-  ok = mock:expect({fake_module, foo, 'Arity2'}, fun(A,B) -> A+B end),
-  ok = mock:expect({fake_module, foo, 'Arity3'}, foobar),
-  ok = mock:expect({fake_module, foo, [1,2,3,4]}, fun(A,B,C,D) -> A+B+C+D end),
-  
-  bar0 = fake_module:foo()),
-  bar1 = fake_module:foo(1)),
-  5 =    fake_module:foo(2,3)),
-  foobar =  fake_module:foo(1,2,3)),
-  10 =  fake_module:foo(1,2,3,4)),
-  mock:stop(fake_module),
-  
-  % for a gen_server
-  {ok, _} = mock:start(fake_server),
-  ok = mock:expect({fake_server, init, [[]]}, {ok,[]}),
-  ok = mock:expect({fake_server, handle_call, 'Arity3'}, {reply, bar, []}),
-  ok = mock:expect({fake_server, handle_cast, 'Arity2'}, {noreply, []}),
-  ok = mock:expect({fake_server, handle_info, 'Arity2'}, {noreply, []}),
-  gen_server:start({local, fake_server}, fake_server, [], []),
-  
-  bar = gen_server:call(fake_server, foo),
-  ok  = gen_server:cast(fake_server, foo),
-  foo = fake_server ! foo,
-  mock:stop(fake_server).
+    % for a module
+    {ok, _} = mock:start(fake_module),
+    ok = mock:expect({fake_module, foo, []}, bar0),
+    ok = mock:expect({fake_module, foo, [1]}, bar1),
+    ok = mock:expect({fake_module, foo, 'Arity2'}, fun(A,B) -> A+B end),
+    ok = mock:expect({fake_module, foo, 'Arity3'}, foobar),
+    ok = mock:expect({fake_module, foo, [1,2,3,4]}, fun(A,B,C,D) -> A+B+C+D end),
+    
+    bar0 = fake_module:foo()),
+    bar1 = fake_module:foo(1)),
+    5 =    fake_module:foo(2,3)),
+    foobar =  fake_module:foo(1,2,3)),
+    10 =  fake_module:foo(1,2,3,4)),
+    mock:stop(fake_module),
+    
+    % for a gen_server
+    {ok, _} = mock:start(fake_server),
+    ok = mock:expect({fake_server, init, [[]]}, {ok,[]}),
+    ok = mock:expect({fake_server, handle_call, 'Arity3'}, {reply, bar, []}),
+    ok = mock:expect({fake_server, handle_cast, 'Arity2'}, {noreply, []}),
+    ok = mock:expect({fake_server, handle_info, 'Arity2'}, {noreply, []}),
+    gen_server:start({local, fake_server}, fake_server, [], []),
+    
+    bar = gen_server:call(fake_server, foo),
+    ok  = gen_server:cast(fake_server, foo),
+    foo = fake_server ! foo,
+    mock:stop(fake_server).
