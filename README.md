@@ -1,24 +1,25 @@
 Erlang Mock And Stub
 ====================
 
-Here is how mock works
+how mock works
+---------------
 
-when expect is called, 
-  1. it saves the existing module to old_code
-  2. build the same name module to call epic_mock:proxy_call
-  3. save the expectation to reply to the call
-  
-when the actual module:function is called
-  1. search the expectation, then reply the call
-
-When stop is called
-  1. it stores back the original modules
-
-expect must has two arity
-  1. Function and Argument
-     Arguments could be a real argument or general ones, i.e 'Arity2', 'Arity3'
-  2. Reply to the call, expectation
-     This could be a term, or a function
+    when expect is called, 
+      1. it saves the existing module to old_code
+      2. build the same name module to call epic_mock:proxy_call
+      3. save the expectation to reply to the call
+      
+    when the actual module:function is called
+      1. search the expectation, then reply the call
+    
+    When stop is called
+      1. it stores back the original modules
+    
+    expect must has two arity
+      1. Function and Argument
+         Arguments could be a real argument or general ones, i.e 'Arity2', 'Arity3'
+      2. Reply to the call, expectation
+         This could be a term, or a function
 
 compile
 -------
